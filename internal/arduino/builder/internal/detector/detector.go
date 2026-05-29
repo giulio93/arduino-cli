@@ -333,7 +333,13 @@ func (l *SketchLibrariesDetector) findIncludes(
 		if err != nil {
 			return err
 		}
-		l.sketchIsUnchanged, _ = mergedSketch.ObjFileIsUpToDate(logrus.WithField("runner", "prerun"))
+		// Compare merged source mtime against the preprocessed output (sketch.ino.cpp),
+		// not the GCC depfile. The depfile is written by GCC *after* the merged source
+		// in every build, so on large/library-heavy projects its mtime is always newer
+		// than .cpp.merged, causing the next build to wrongly skip re-preprocessing
+		// even after a real edit (issue #3202).
+		preprocessedSketchFile := sketchBuildPath.Join(sketch.MainFile.Base() + ".cpp")
+		l.sketchIsUnchanged = isSketchPreprocessingUpToDate(mergedSketch.SourcePath, preprocessedSketchFile)
 
 		// Queue all sources from sketch folder, except the preprocessed sketch "sketch.ino.cpp".
 		// The library discovery is performed on the `sketch.ino.cpp.merged` file.
@@ -731,4 +737,21 @@ func LibrariesLoader(
 	release()
 	resolver := librariesresolver.NewCppResolver(allLibs, targetPlatform, buildPlatform)
 	return lm, resolver, verboseOut.Bytes(), nil
+}
+
+// isSketchPreprocessingUpToDate returns true when the preprocessed sketch
+// output (sketch.ino.cpp) exists and is at least as new as the merged source
+// (sketch.ino.cpp.merged). This anchors the staleness check to the actual
+// preprocessing output instead of the GCC depfile, which is written *after*
+// the merged source and would otherwise make the check always pass.
+func isSketchPreprocessingUpToDate(mergedSource, preprocessedOutput *paths.Path) bool {
+	srcStat, err := mergedSource.Stat()
+	if err != nil {
+		return false
+	}
+	outStat, err := preprocessedOutput.Stat()
+	if err != nil {
+		return false
+	}
+	return !srcStat.ModTime().After(outStat.ModTime())
 }
