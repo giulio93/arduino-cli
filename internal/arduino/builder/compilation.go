@@ -17,6 +17,8 @@ package builder
 
 import (
 	"bytes"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"runtime"
 	"strings"
@@ -122,6 +124,7 @@ func (b *Builder) compileFileWithRecipe(
 	}
 	depsFile := buildPath.Join(relativeSource.String() + ".d")
 	objectFile := buildPath.Join(relativeSource.String() + ".o")
+	flagsFile := buildPath.Join(relativeSource.String() + ".d.flags")
 	if err := objectFile.Parent().MkdirAll(); err != nil {
 		return nil, err
 	}
@@ -139,9 +142,16 @@ func (b *Builder) compileFileWithRecipe(
 		b.compilationDatabase.Add(source, command)
 	}
 
+	currentHash := hashCommandFingerprint(command.GetArgs())
+
 	objIsUpToDate, err := utils.ObjFileIsUpToDate(source, objectFile, depsFile)
 	if err != nil {
 		return nil, err
+	}
+	if objIsUpToDate {
+		if storedHash, err := flagsFile.ReadFile(); err != nil || string(storedHash) != currentHash {
+			objIsUpToDate = false
+		}
 	}
 	if objIsUpToDate {
 		if b.logger.VerbosityLevel() == logger.VerbosityVerbose {
@@ -184,5 +194,19 @@ func (b *Builder) compileFileWithRecipe(
 		return nil, err
 	}
 
+	// Persist the command fingerprint so future builds can detect flag changes.
+	// A write failure only affects caching, not correctness, so it is ignored.
+	_ = flagsFile.WriteFile([]byte(currentHash))
+
 	return objectFile, nil
+}
+
+// hashCommandFingerprint returns a hex MD5 digest of the compilation command
+// arguments. Used to detect flag/include changes between builds.
+func hashCommandFingerprint(args []string) string {
+	h := md5.New()
+	for _, arg := range args {
+		fmt.Fprintln(h, arg)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
