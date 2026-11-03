@@ -13,7 +13,7 @@
 // Arduino software without disclosing the source code of your own applications.
 // To purchase a commercial license, send an email to license@arduino.cc.
 
-//go:build !linux && !windows
+//go:build !linux && !windows && !js
 
 package utils
 
